@@ -1,0 +1,14 @@
+[
+  {
+    "label": "Run C++ with GDB",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/build/elfs-and-wizards",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "build": {
+      "command": "make",
+      "args": ["-j8"],
+      "cwd": "$ZED_WORKTREE_ROOT/build"
+    }
+  }
+]

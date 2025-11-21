@@ -1,0 +1,9 @@
+[
+  {
+    "label": "make and run",
+    "command": "cd /home/louis/proggers/elfs-and-wizards/build && make && ./elfs-and-wizards",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "reveal": "always"
+  }
+]
