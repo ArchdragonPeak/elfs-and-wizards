@@ -9,10 +9,10 @@
 #include <iostream>
 #include <math.h>
 #include <memory>
+#include <queue>
 #include <sstream>
 #include <stdlib.h>
 #include <vector>
-#include <queue>
 
 // mine
 #include "colors.hpp"
@@ -49,6 +49,8 @@ struct WorldInteraction
 struct Player
 {
   static queue<WorldInteraction> interactions;
+  string name;
+  uint32_t id;
   Vector2 position;
   Tuple lastPlayerChunk;
   Tuple currentPlayerChunk;
@@ -71,8 +73,17 @@ struct Chunk
   Texture2D chunkDataTexture;
   RenderTexture2D chunkTexture;
 };
-
 Tuple Chunk::selectedChunkPixel = {0, 0};
+
+struct World
+{
+  string name;
+  const int version = 0;
+  const int worldDimension = 64;
+  uint8_t type = 1; // ex: 0 - overworld, 1 - mines: more to be added
+  array<array<unique_ptr<Chunk>, 64>, 64> chunkArr;
+  vector<Player> playerList;
+};
 
 Color palette[] = {{90, 110, 140, 255}, {120, 90, 70, 255}, {100, 130, 90, 255}};
 
@@ -209,18 +220,15 @@ void updatePhysics(Player &p, float dt, array<array<unique_ptr<Chunk>, 64>, 64> 
   int y = floor(p.position.y / CHUNK_PIXEL);
   if (!(x < 0 || x >= 64 || y < 0 || y >= 64))
     p.currentPlayerChunk = {x, y};
-  while(!Player::interactions.empty())
+  while (!Player::interactions.empty())
   {
-    WorldInteraction& interaction = Player::interactions.front();
-    if(interaction.InteractionType == 0)
+    WorldInteraction &interaction = Player::interactions.front();
+    if (interaction.InteractionType == 0)
     {
       uint16_t rC = interaction.BlockID;
-      ImageDrawPixel(
-        &chunks[interaction.InteractionChunk.x][interaction.InteractionChunk.y]->chunkData,
-        interaction.InteractionPosition.x,
-        interaction.InteractionPosition.y,
-        (Color){(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 0}
-      );
+      ImageDrawPixel(&chunks[interaction.InteractionChunk.x][interaction.InteractionChunk.y]->chunkData,
+                     interaction.InteractionPosition.x, interaction.InteractionPosition.y,
+                     (Color){(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 0});
       chunks[interaction.InteractionChunk.x][interaction.InteractionChunk.y]->needsUpdate = true;
     }
     Player::interactions.pop();
@@ -251,7 +259,7 @@ void paintOnChunkT(Chunk &chunk)
         cout << "Unknown color: " << pixelColor.r << ", " << pixelColor.g << ", " << pixelColor.b << endl;
         */
       uint16_t id = (pixelColor.r << 4) | (pixelColor.g >> 4);
-      //cout << id << "\n";
+      // cout << id << "\n";
       DrawTextureRec(solidsT[id], (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
                      (Vector2){(float)x * BLOCK_PIXEL, (float)y * BLOCK_PIXEL}, WHITE);
     }
@@ -365,8 +373,8 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
   if(Chunk::selectedChunkPixel.x >= CHUNK_BLOCKS) Chunk::selectedChunkPixel.x = CHUNK_BLOCKS - 1;
   if(Chunk::selectedChunkPixel.y >= CHUNK_BLOCKS) Chunk::selectedChunkPixel.y = CHUNK_BLOCKS - 1;
   */
-  //cout << Chunk::selectedChunkPixel.x << ", " << Chunk::selectedChunkPixel.y << endl;
-  // player
+  // cout << Chunk::selectedChunkPixel.x << ", " << Chunk::selectedChunkPixel.y << endl;
+  //  player
   DrawRectangle(p.position.x - 20, p.position.y - 40, 40, 80, OrangePeel);
   DrawTextureEx(p.playerTexture, {p.position.x - 25, p.position.y - 60}, 0.0f, 0.8f, WHITE);
 
@@ -429,49 +437,48 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
 {
   // load moore neighbours (more [lmao] or less) of chunk the player is in
   Tuple playerChunk = p.currentPlayerChunk;
-  //if (p.currentPlayerChunk.x == p.lastPlayerChunk.x && p.currentPlayerChunk.y == p.lastPlayerChunk.y)
-  //  return;
+  // if (p.currentPlayerChunk.x == p.lastPlayerChunk.x && p.currentPlayerChunk.y == p.lastPlayerChunk.y)
+  //   return;
   p.lastPlayerChunk.x = p.currentPlayerChunk.x;
   p.lastPlayerChunk.y = p.currentPlayerChunk.y;
 
-  // chunks are loaded in a box-like structure with the witdth of CHUNK_WIDTH
+  // chunks are loaded in a box-like structure with the witdth of VIEW_RADIUS + 1
   const int half_width = VIEW_RADIUS;
   for (int y = -half_width; y <= half_width; y++)
-  {
-    for (int x = -half_width; x <= half_width; x++)
     {
-      const int chunkX = playerChunk.x + x;
-      const int chunkY = playerChunk.y + y;
-
-      if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
-        continue;
-
-      //cout << "Updating chunk" << "\n";
-      if (!chunks[chunkY][chunkX])
+      for (int x = -half_width; x <= half_width; x++)
       {
-        // cout << "Creating chunk" << "\n";
-        // Chunk tmp = initChunk(chunkY*64 + chunkX, {chunkX, chunkY});
-        chunks[chunkY][chunkX] = make_unique<Chunk>();
-        initChunk(*chunks[chunkY][chunkX], chunkY * 64 + chunkX, {chunkX, chunkY});
-        paintChunk(*chunks[chunkY][chunkX]);
-        if (chunks[chunkY][chunkX]->needsUpdate)
+        const int chunkX = playerChunk.x + x;
+        const int chunkY = playerChunk.y + y;
+
+        if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
+          continue;
+
+        unique_ptr<Chunk> &chunkPtr = chunks[chunkY][chunkX];
+
+        // cout << "Updating chunk" << "\n";
+        if (!chunkPtr)
         {
+          // cout << "Creating chunk" << "\n";
+          chunks[chunkY][chunkX] = make_unique<Chunk>();
           Chunk &chunk = *chunks[chunkY][chunkX];
+          // Chunk tmp = initChunk(chunkY*64 + chunkX, {chunkX, chunkY});
+          initChunk(chunk, chunkY * 64 + chunkX, {chunkX, chunkY});
+          paintChunk(chunk);
           paintOnChunkT(chunk);
-          chunks[chunkY][chunkX]->needsUpdate = false;
+          chunk.needsUpdate = false;
         }
-      }
-      else
-      {
-        if (chunks[chunkY][chunkX]->needsUpdate)
+        else
         {
           Chunk &chunk = *chunks[chunkY][chunkX];
-          paintOnChunkT(chunk);
-          chunks[chunkY][chunkX]->needsUpdate = false;
+          if (chunk.needsUpdate)
+          {
+            paintOnChunkT(chunk);
+            chunk.needsUpdate = false;
+          }
         }
       }
     }
-  }
 
   // unload distant chunks
   const float dist = CHUNK_PIXEL * (VIEW_RADIUS + 20) * 100;
@@ -522,9 +529,18 @@ int main()
   // initializing
   InitWindow(windowWidth, windowHeight, "elfs-and-wizards");
   SetTargetFPS(360);
-  const Texture2D player_texture = LoadTexture("../assets/elf_character.png");
-  Player player = {32 * 64 * 16, 32 * 64 * 16};
-  player.playerTexture = player_texture;
+
+  // setup player
+  Player player = {
+      .name = "Louis",
+      .id = 1,
+      .position = {.x = 32 * 64 * 16, .y = 32 * 64 * 16},
+      .playerTexture = LoadTexture("../assets/elf_character.png"),
+      .currentItem = 607,
+  };
+  // setup world
+  World world = {.name = "Overworld"};
+  world.playerList.push_back(player);
 
   for (int i = 0; i < 609; i++)
   {
