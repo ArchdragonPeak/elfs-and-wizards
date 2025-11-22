@@ -12,6 +12,7 @@
 #include <sstream>
 #include <stdlib.h>
 #include <vector>
+#include <queue>
 
 // mine
 #include "colors.hpp"
@@ -37,8 +38,17 @@ struct Tuple
   int y;
 };
 
+struct WorldInteraction
+{
+  int InteractionType;
+  Tuple InteractionChunk;
+  Tuple InteractionPosition;
+  int BlockID;
+};
+
 struct Player
 {
+  static queue<WorldInteraction> interactions;
   Vector2 position;
   Tuple lastPlayerChunk;
   Tuple currentPlayerChunk;
@@ -49,9 +59,11 @@ struct Player
   Texture2D playerTexture;
   int currentItem;
 };
+queue<WorldInteraction> Player::interactions;
 
 struct Chunk
 {
+  static Tuple selectedChunkPixel;
   size_t id;
   Tuple chunkPos;
   bool needsUpdate = true;
@@ -59,6 +71,8 @@ struct Chunk
   Texture2D chunkDataTexture;
   RenderTexture2D chunkTexture;
 };
+
+Tuple Chunk::selectedChunkPixel = {0, 0};
 
 Color palette[] = {{90, 110, 140, 255}, {120, 90, 70, 255}, {100, 130, 90, 255}};
 
@@ -120,14 +134,14 @@ void handleInput(Player &p, Camera2D &camera)
   p.acceleration = {0.0f, 0.0f};
   const float accel = 2000.0f;
 
-  if (IsKeyDown(KEY_RIGHT))
+  if (IsKeyDown(KEY_D))
     p.acceleration.x += accel;
-  if (IsKeyDown(KEY_LEFT))
+  if (IsKeyDown(KEY_A))
     p.acceleration.x -= accel;
 
-  if (IsKeyDown(KEY_DOWN))
+  if (IsKeyDown(KEY_S))
     p.acceleration.y += accel;
-  if (IsKeyDown(KEY_UP))
+  if (IsKeyDown(KEY_W))
     p.acceleration.y -= accel;
 
   if (IsKeyPressed(KEY_Q) && p.currentItem > 0)
@@ -138,6 +152,15 @@ void handleInput(Player &p, Camera2D &camera)
   // if (IsKeyDown(KEY_UP) && p.onGround)
   //   p.velocity.y = p.jumpHeight;
 
+  if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
+  {
+    WorldInteraction interaction = {};
+    interaction.BlockID = p.currentItem;
+    interaction.InteractionChunk = p.currentPlayerChunk;
+    interaction.InteractionPosition = Chunk::selectedChunkPixel;
+    interaction.InteractionType = 0;
+    Player::interactions.push(interaction);
+  }
   float wheel = GetMouseWheelMove();
   if (wheel != 0.0f)
   {
@@ -145,7 +168,7 @@ void handleInput(Player &p, Camera2D &camera)
   }
 }
 
-void updatePhysics(Player &p, float dt)
+void updatePhysics(Player &p, float dt, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
 {
   // gravity
   // const float gravity = 3500.0f;
@@ -186,6 +209,22 @@ void updatePhysics(Player &p, float dt)
   int y = floor(p.position.y / CHUNK_PIXEL);
   if (!(x < 0 || x >= 64 || y < 0 || y >= 64))
     p.currentPlayerChunk = {x, y};
+  while(!Player::interactions.empty())
+  {
+    WorldInteraction& interaction = Player::interactions.front();
+    if(interaction.InteractionType == 0)
+    {
+      uint16_t rC = interaction.BlockID;
+      ImageDrawPixel(
+        &chunks[interaction.InteractionChunk.x][interaction.InteractionChunk.y]->chunkData,
+        interaction.InteractionPosition.x,
+        interaction.InteractionPosition.y,
+        (Color){(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 0}
+      );
+      chunks[interaction.InteractionChunk.x][interaction.InteractionChunk.y]->needsUpdate = true;
+    }
+    Player::interactions.pop();
+  }
 }
 void paintOnChunkT(Chunk &chunk)
 {
@@ -212,7 +251,7 @@ void paintOnChunkT(Chunk &chunk)
         cout << "Unknown color: " << pixelColor.r << ", " << pixelColor.g << ", " << pixelColor.b << endl;
         */
       uint16_t id = (pixelColor.r << 4) | (pixelColor.g >> 4);
-      // cout << id << "\n";
+      //cout << id << "\n";
       DrawTextureRec(solidsT[id], (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
                      (Vector2){(float)x * BLOCK_PIXEL, (float)y * BLOCK_PIXEL}, WHITE);
     }
@@ -225,7 +264,7 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
   ClearBackground(BlueSpace);
   BeginMode2D(camera);
 
-  // draw chunks - goes through all chunks in chunks array in draw them
+  // draw data of chunks - goes through all chunks in chunks array in draws blocks as pixels
   const int dings = 6;
   for (int y = -dings; y <= dings; y++)
   {
@@ -255,10 +294,8 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
                     {(float)chunk.chunkPos.x * CHUNK_PIXEL, (float)chunk.chunkPos.y * CHUNK_PIXEL}, 0.0f, 16.0f, WHITE);
     }
   }
-
-  /* draw textures on pixels
-   *  loop through all pixels in chunk and render texture for corresponding
-   * pixel todo: greedy meshing
+  /*
+   * draw baked textures on chunks
    */
   const int half_chunk_size = VIEW_RADIUS;
 
@@ -313,6 +350,22 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
   DrawRectangleLinesEx({(float)p.currentPlayerChunk.x * CHUNK_PIXEL, (float)p.currentPlayerChunk.y * CHUNK_PIXEL,
                         CHUNK_PIXEL, CHUNK_PIXEL},
                        5, {255, 255, 255, 96});
+
+  // visualize selected block in playerchunk
+  Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
+  mousePos.x = mousePos.x - ((int)mousePos.x % BLOCK_PIXEL);
+  mousePos.y = mousePos.y - ((int)mousePos.y % BLOCK_PIXEL);
+  DrawRectangle(mousePos.x, mousePos.y, BLOCK_PIXEL, BLOCK_PIXEL, {255, 255, 255, 180});
+  Tuple chunkWorldPos = {p.currentPlayerChunk.x * CHUNK_PIXEL, p.currentPlayerChunk.y * CHUNK_PIXEL};
+  DrawRectangle(chunkWorldPos.x, chunkWorldPos.y, BLOCK_PIXEL, BLOCK_PIXEL, {255, 0, 255, 255});
+  Chunk::selectedChunkPixel = {(int)(mousePos.x - chunkWorldPos.x) / 16, (int)(mousePos.y - chunkWorldPos.y) / 16};
+  /*
+  if(Chunk::selectedChunkPixel.x < 0) Chunk::selectedChunkPixel.x = 0;
+  if(Chunk::selectedChunkPixel.y < 0) Chunk::selectedChunkPixel.y = 0;
+  if(Chunk::selectedChunkPixel.x >= CHUNK_BLOCKS) Chunk::selectedChunkPixel.x = CHUNK_BLOCKS - 1;
+  if(Chunk::selectedChunkPixel.y >= CHUNK_BLOCKS) Chunk::selectedChunkPixel.y = CHUNK_BLOCKS - 1;
+  */
+  //cout << Chunk::selectedChunkPixel.x << ", " << Chunk::selectedChunkPixel.y << endl;
   // player
   DrawRectangle(p.position.x - 20, p.position.y - 40, 40, 80, OrangePeel);
   DrawTextureEx(p.playerTexture, {p.position.x - 25, p.position.y - 60}, 0.0f, 0.8f, WHITE);
@@ -376,8 +429,8 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
 {
   // load moore neighbours (more [lmao] or less) of chunk the player is in
   Tuple playerChunk = p.currentPlayerChunk;
-  if (p.currentPlayerChunk.x == p.lastPlayerChunk.x && p.currentPlayerChunk.y == p.lastPlayerChunk.y)
-    return;
+  //if (p.currentPlayerChunk.x == p.lastPlayerChunk.x && p.currentPlayerChunk.y == p.lastPlayerChunk.y)
+  //  return;
   p.lastPlayerChunk.x = p.currentPlayerChunk.x;
   p.lastPlayerChunk.y = p.currentPlayerChunk.y;
 
@@ -393,6 +446,7 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
       if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
         continue;
 
+      //cout << "Updating chunk" << "\n";
       if (!chunks[chunkY][chunkX])
       {
         // cout << "Creating chunk" << "\n";
@@ -452,7 +506,7 @@ int gameLoop(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2
 
     while (accumulator >= dt)
     {
-      updatePhysics(p, dt);
+      updatePhysics(p, dt, chunks);
       accumulator -= dt;
     }
 
