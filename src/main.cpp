@@ -84,16 +84,34 @@ struct World
   array<array<unique_ptr<Chunk>, 64>, 64> chunkArr;
   vector<Player> playerList;
 };
-
-Color palette[] = {{90, 110, 140, 255}, {120, 90, 70, 255}, {100, 130, 90, 255}};
-
-Color getRandomColor()
+const int surfaceFactor = 20;
+void paintChunk(Chunk &chunk, int xOffset, int yOffset)
 {
-  int size = sizeof(palette) / sizeof(palette[0]);
-  return palette[rand() % size];
+  // generate perlin image
+  chunk.chunkData = GenImagePerlinNoise(CHUNK_BLOCKS, CHUNK_BLOCKS, xOffset, yOffset, 2);
+
+  // check if generated blocks are over or under surface function (sinus)
+
+  for(size_t y = 0; y<chunk.chunkData.height;y++)
+  {
+    for(size_t x = 0; x<chunk.chunkData.width;x++)
+    {
+      // getting pointer on raw image data
+      int realX = x + xOffset;
+      int realY = y + yOffset;
+      if((1000+(sin(realX*0.01f)*surfaceFactor)) < realY)
+        continue;
+
+      Color *ptr = (Color *)chunk.chunkData.data;
+      ptr[y * chunk.chunkData.width + x] = (Color){0, 0, 0, 0};
+    }
+  }
+
+
+  chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
 }
 
-int paintChunk(Chunk &chunk)
+void paintChunk(Chunk &chunk)
 {
   // paint chunk with random colors
   for (size_t y = 0; y < chunk.chunkData.height; y++)
@@ -109,24 +127,9 @@ int paintChunk(Chunk &chunk)
   }
   chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
   // UnloadImage(chunk.data);
-  return 0;
 }
-/*
-Chunk initChunk(size_t id, Tuple chunkPos)
-{
-  Chunk chunk;
-  chunk.id = id;
-  chunk.chunkPos = chunkPos;
-  chunk.data.width = CHUNK_BLOCKS;
-  chunk.data.height = CHUNK_BLOCKS;
-  chunk.data.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-  chunk.data.mipmaps = 8;
-  // 64*64*4 = 16384
-  chunk.data.data = calloc(chunk.data.width * chunk.data.height, sizeof(Color));
-  return chunk;
-}
-*/
 
+// creating a chunk struct on the pointer, allocating data and RenderTexture for future painting
 void initChunk(Chunk &chunk, size_t id, Tuple chunkPos)
 {
   chunk.id = id;
@@ -213,9 +216,9 @@ void updatePhysics(Player &p, float dt, array<array<unique_ptr<Chunk>, 64>, 64> 
 
   // cout << "\rPlayer: " << p.position.x << ", " << p.position.y << " | "
   //      << p.velocity.x << ", " << p.velocity.y << flush;
-  //
-  //  update player chunk
 
+
+  //  update player chunk by going through interactions
   int x = floor(p.position.x / CHUNK_PIXEL);
   int y = floor(p.position.y / CHUNK_PIXEL);
   if (!(x < 0 || x >= 64 || y < 0 || y >= 64))
@@ -242,26 +245,13 @@ void paintOnChunkT(Chunk &chunk)
     for (int x = 0; x < CHUNK_BLOCKS; x++)
     {
       Color pixelColor = GetImageColor(chunk.chunkData, x, y);
-      /*
-      if (pixelColor == palette[0])
-        // DrawTexture(solidsT[0], x * BLOCK_PIXEL, y * BLOCK_PIXEL, WHITE);
-        DrawTextureRec(solidsT[0], (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
-                       (Vector2){(float)x * BLOCK_PIXEL, (float)y * BLOCK_PIXEL}, WHITE);
-      else if (pixelColor == palette[1])
-        // DrawTexture(solidsT[1], x * BLOCK_PIXEL, y * BLOCK_PIXEL, WHITE);
-        DrawTextureRec(solidsT[1], (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
-                       (Vector2){(float)x * BLOCK_PIXEL, (float)y * BLOCK_PIXEL}, WHITE);
-      else if (pixelColor == palette[2])
-        // DrawTexture(solidsT[2], x * BLOCK_PIXEL, y * BLOCK_PIXEL, WHITE);
-        DrawTextureRec(solidsT[2], (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
-                       (Vector2){(float)x * BLOCK_PIXEL, (float)y * BLOCK_PIXEL}, WHITE);
-      else
-        cout << "Unknown color: " << pixelColor.r << ", " << pixelColor.g << ", " << pixelColor.b << endl;
-        */
       uint16_t id = (pixelColor.r << 4) | (pixelColor.g >> 4);
-      // cout << id << "\n";
-      DrawTextureRec(solidsT[id], (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
-                     (Vector2){(float)x * BLOCK_PIXEL, (float)y * BLOCK_PIXEL}, WHITE);
+      DrawTextureRec(
+        solidsT[id],
+        (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
+        (Vector2){(float)x * BLOCK_PIXEL, (float)y * BLOCK_PIXEL},
+        WHITE
+      );
     }
   }
   EndTextureMode();
@@ -273,7 +263,7 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
   BeginMode2D(camera);
 
   // draw data of chunks - goes through all chunks in chunks array in draws blocks as pixels
-  const int dings = 6;
+  const int dings = VIEW_RADIUS;
   for (int y = -dings; y <= dings; y++)
   {
     for (int x = -dings; x <= dings; x++)
@@ -288,18 +278,10 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
         continue;
 
       Chunk &chunk = *chunks[chunkY][chunkX];
-      // cout << chunk.chunkPos.x << ", " << chunk.chunkPos.y << "\n";
-      // DrawTextureEx(
-      //   chunk.texture,
-      //   {(float)chunk.chunkPos.x*64, (float)chunk.chunkPos.y*64},
-      //   0.0f,
-      //   1,
-      //   Color{255, 200, 250, 255});
-
       const float scale = float(CHUNK_PIXEL) / 64.0f;
 
       DrawTextureEx(chunk.chunkDataTexture,
-                    {(float)chunk.chunkPos.x * CHUNK_PIXEL, (float)chunk.chunkPos.y * CHUNK_PIXEL}, 0.0f, 16.0f, WHITE);
+                   {(float)chunk.chunkPos.x * CHUNK_PIXEL, (float)chunk.chunkPos.y * CHUNK_PIXEL}, 0.0f, 16.0f, WHITE);
     }
   }
   /*
@@ -309,6 +291,8 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
 
   for (int y = -half_chunk_size; y <= half_chunk_size; y++)
   {
+    // deactivate drawing of textures
+    continue;
     for (int x = -half_chunk_size; x <= half_chunk_size; x++)
     {
       const int chunkX = p.currentPlayerChunk.x + x;
@@ -316,48 +300,32 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
 
       if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
         continue;
-
       if (chunks[chunkY][chunkX])
       {
         Chunk &chunk = *chunks[chunkY][chunkX];
         const Tuple chunkPos = {chunkX * CHUNK_PIXEL, chunkY * CHUNK_PIXEL};
         DrawTexture(chunk.chunkTexture.texture, chunkPos.x, chunkPos.y, WHITE);
         DrawTextureRec(
-            chunk.chunkTexture.texture,
-            (Rectangle){0, 0, (float)chunk.chunkTexture.texture.width, -(float)chunk.chunkTexture.texture.height},
-            {(float)chunkPos.x, (float)chunkPos.y}, WHITE);
-
-        /*
-        // MUẞ WEG!!
-        for (int y = 0; y < CHUNK_BLOCKS; y++)
-        {
-          for (int x = 0; x < CHUNK_BLOCKS; x++)
-          {
-            // GetImageColor(chunk.data, x, y);
-            Color pixelColor = GetImageColor(chunk.chunkData, x, y);
-            if (pixelColor == palette[0])
-              DrawTexture(solidsT[0], chunkPos.x + x * BLOCK_PIXEL, chunkPos.y + y * BLOCK_PIXEL, WHITE);
-            else if (pixelColor == palette[1])
-              DrawTexture(solidsT[1], chunkPos.x + x * BLOCK_PIXEL, chunkPos.y + y * BLOCK_PIXEL, WHITE);
-            else if (pixelColor == palette[2])
-              DrawTexture(solidsT[2], chunkPos.x + x * BLOCK_PIXEL, chunkPos.y + y * BLOCK_PIXEL, WHITE);
-            else
-              cout << "Unknown color: " << pixelColor.r << ", " << pixelColor.g << ", " << pixelColor.b << endl;
-          }
-        }
-        */
+          chunk.chunkTexture.texture,
+          (Rectangle){0, 0, (float)chunk.chunkTexture.texture.width, -(float)chunk.chunkTexture.texture.height},
+          {(float)chunkPos.x, (float)chunkPos.y},
+          WHITE
+        );
       }
       else
       {
-        // cout << "Chunk not found";
+        cout << "This should not happen :/";
       }
     }
   }
 
   // visualize chunk player is in
-  DrawRectangleLinesEx({(float)p.currentPlayerChunk.x * CHUNK_PIXEL, (float)p.currentPlayerChunk.y * CHUNK_PIXEL,
-                        CHUNK_PIXEL, CHUNK_PIXEL},
-                       5, {255, 255, 255, 96});
+  DrawRectangleLinesEx(
+    {(float)p.currentPlayerChunk.x * CHUNK_PIXEL, (float)p.currentPlayerChunk.y * CHUNK_PIXEL,
+    CHUNK_PIXEL, CHUNK_PIXEL},
+    5,
+    {255, 255, 255, 96}
+  );
 
   // visualize selected block in playerchunk
   Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
@@ -454,17 +422,18 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
         if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
           continue;
 
+        // unique_ptr possibly unnecessary
         unique_ptr<Chunk> &chunkPtr = chunks[chunkY][chunkX];
-
-        // cout << "Updating chunk" << "\n";
         if (!chunkPtr)
         {
-          // cout << "Creating chunk" << "\n";
           chunks[chunkY][chunkX] = make_unique<Chunk>();
           Chunk &chunk = *chunks[chunkY][chunkX];
-          // Chunk tmp = initChunk(chunkY*64 + chunkX, {chunkX, chunkY});
           initChunk(chunk, chunkY * 64 + chunkX, {chunkX, chunkY});
-          paintChunk(chunk);
+          //paintChunk(chunk);
+
+          // one block is one pixel in the data texture, thus we need to scale to block-level-resolution
+          // which means 1 block = 1 unit
+          paintChunk(chunk, chunkX*CHUNK_BLOCKS, chunkY*CHUNK_BLOCKS);
           paintOnChunkT(chunk);
           chunk.needsUpdate = false;
         }
@@ -549,10 +518,6 @@ int main()
     str += ".png";
     solidsT[i] = LoadTexture(str.c_str());
   }
-  /*solidsT[0] = LoadTexture("../assets/solids/texture_16px 39.png");
-  solidsT[1] = LoadTexture("../assets/solids/texture_16px 40.png");
-  solidsT[2] = LoadTexture("../assets/solids/texture_16px 27.png");
-  solidsT[3] = LoadTexture("../assets/solids/texture_16px 42.png");*/
 
   array<array<unique_ptr<Chunk>, 64>, 64> chunks;
 
