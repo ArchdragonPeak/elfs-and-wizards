@@ -27,8 +27,8 @@ constexpr int windowHeight = 1080;
 constexpr int BLOCK_PIXEL = 16;                         // Pixel per Block
 constexpr int CHUNK_BLOCKS = 64;                        // Blocks per Chunk
 constexpr int CHUNK_PIXEL = BLOCK_PIXEL * CHUNK_BLOCKS; // total Pixel per Block
-int VIEW_RADIUS = 3;                                    // only even numbers please!
-Texture2D solidsT[609] = {};
+int VIEW_RADIUS = 3;
+Texture2D solidsT[609] = {}; //todo: allocate dynamically
 
 bool operator==(Color a, Color b) { return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a; }
 
@@ -66,12 +66,13 @@ queue<WorldInteraction> Player::interactions;
 struct Chunk
 {
   static Tuple selectedChunkPixel;
-  size_t id;
-  Tuple chunkPos;
-  bool needsUpdate = true;
-  Image chunkData; // stores blocks
-  Texture2D chunkDataTexture;
-  RenderTexture2D chunkTexture;
+  size_t id; // should be usable to derive chunkPos
+  Tuple chunkPos; // chunk coordinates
+  bool needsUpdate = true; // as data on chunks need frecuent updates this can possibly also be used as isGenerated
+  bool isLoaded = false;
+  Image chunkData; // stores blocks as pixels in Image (RAM)
+  Texture2D chunkDataTexture; // stores image from above to VRAM, only for debug
+  RenderTexture2D chunkTexture; // baked texture
 };
 Tuple Chunk::selectedChunkPixel = {0, 0};
 
@@ -79,12 +80,17 @@ struct World
 {
   string name;
   const int version = 0;
-  const int worldDimension = 64;
+  const int width = 64;
+  const int height = 64;
+  bool isLoaded = false;
+  bool isGenerated = false;
   uint8_t type = 1; // ex: 0 - overworld, 1 - mines: more to be added
   array<array<unique_ptr<Chunk>, 64>, 64> chunkArr;
   vector<Player> playerList;
 };
 const int surfaceFactor = 20;
+
+
 void paintChunk(Chunk &chunk, int xOffset, int yOffset)
 {
   // generate perlin image
@@ -106,10 +112,9 @@ void paintChunk(Chunk &chunk, int xOffset, int yOffset)
       ptr[y * chunk.chunkData.width + x] = (Color){0, 0, 0, 0};
     }
   }
-
-
   chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
 }
+
 
 void paintChunk(Chunk &chunk)
 {
@@ -141,6 +146,7 @@ void initChunk(Chunk &chunk, size_t id, Tuple chunkPos)
   // 64*64*4 = 16384
   chunk.chunkData.data = calloc(chunk.chunkData.width * chunk.chunkData.height, sizeof(Color));
   chunk.chunkTexture = LoadRenderTexture(CHUNK_PIXEL, CHUNK_PIXEL);
+  chunk.isLoaded = true;
 }
 
 void handleInput(Player &p, Camera2D &camera)
@@ -401,12 +407,20 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
   EndDrawing();
 }
 
+/*
+ * The idea is a very basic model: keep all chunk images in memory,
+ * while uploading a small amount to VRAM.
+ * At 64x64 Chunks per World that shouldnt be more than a few hundred mb.
+ * todo: needs integration in the world-->chunks Model
+ */
 void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
 {
   // load moore neighbours (more [lmao] or less) of chunk the player is in
   Tuple playerChunk = p.currentPlayerChunk;
   // if (p.currentPlayerChunk.x == p.lastPlayerChunk.x && p.currentPlayerChunk.y == p.lastPlayerChunk.y)
   //   return;
+
+  // todo: this maybe should be in physics
   p.lastPlayerChunk.x = p.currentPlayerChunk.x;
   p.lastPlayerChunk.y = p.currentPlayerChunk.y;
 
@@ -519,7 +533,7 @@ int main()
     solidsT[i] = LoadTexture(str.c_str());
   }
 
-  array<array<unique_ptr<Chunk>, 64>, 64> chunks;
+  //array<array<unique_ptr<Chunk>, 64>, 64> chunks;
 
   /*for (size_t i = 0; i < 10; i++)
   {
@@ -543,7 +557,7 @@ int main()
   camera.zoom = 1.0f;
 
   // start
-  gameLoop(player, chunks, camera);
+  gameLoop(player, world.chunkArr, camera);
 
   CloseWindow();
   return 0;
