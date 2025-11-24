@@ -483,7 +483,7 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
   }
 }
 
-int gameLoop(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &camera)
+int gameLoop(Player &p, vector<World> &worldList, Camera2D &camera)
 {
   const float dt = 1.0f / 60.0f;
   float accumulator = 0.0f;
@@ -496,13 +496,22 @@ int gameLoop(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2
 
     while (accumulator >= dt)
     {
-      updatePhysics(p, dt, chunks);
+      for(World& w : worldList){
+        if(w.isLoaded)
+          updatePhysics(p, dt, w.chunkArr);
+      }
       accumulator -= dt;
     }
 
-    manageChunks(p, chunks);
+    for(World& w : worldList){
+      if(w.isLoaded)
+        manageChunks(p, w.chunkArr);
+    }
     camera.target = {p.position.x, p.position.y};
-    draw(p, chunks, camera);
+    for(World& w : worldList){
+      if(w.isLoaded)
+        draw(p, w.chunkArr, camera);
+    }
   }
   return 0;
 }
@@ -513,6 +522,9 @@ int main()
   InitWindow(windowWidth, windowHeight, "elfs-and-wizards");
   SetTargetFPS(360);
 
+  vector<World> worldList;
+  worldList.emplace_back();
+
   // setup player
   Player player = {
       .name = "Louis",
@@ -522,8 +534,10 @@ int main()
       .currentItem = 607,
   };
   // setup world
-  World world = {.name = "Overworld"};
+  World& world = worldList.back();
+  world.name = "Overworld";
   world.playerList.push_back(player);
+  world.isLoaded = true;
 
   for (int i = 0; i < 609; i++)
   {
@@ -557,7 +571,7 @@ int main()
   camera.zoom = 1.0f;
 
   // start
-  gameLoop(player, world.chunkArr, camera);
+  gameLoop(player, worldList, camera);
 
   CloseWindow();
   return 0;
