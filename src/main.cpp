@@ -27,7 +27,7 @@ constexpr int windowHeight = 1080;
 constexpr int BLOCK_PIXEL = 16;                         // Pixel per Block
 constexpr int CHUNK_BLOCKS = 64;                        // Blocks per Chunk
 constexpr int CHUNK_PIXEL = BLOCK_PIXEL * CHUNK_BLOCKS; // total Pixel per Block
-int VIEW_RADIUS = 3;
+int VIEW_RADIUS = 8;
 Texture2D solidsT[609] = {}; //todo: allocate dynamically
 
 bool operator==(Color a, Color b) { return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a; }
@@ -70,7 +70,7 @@ struct Chunk
   Tuple chunkPos; // chunk coordinates
   bool needsUpdate = true; // as data on chunks need frecuent updates this can possibly also be used as isGenerated
   bool isLoaded = false;
-  Image chunkData; // stores blocks as pixels in Image (RAM)
+  Image chunkData; // blocks as pixels in Image (RAM)
   Texture2D chunkDataTexture; // stores image from above to VRAM, only for debug
   RenderTexture2D chunkTexture; // baked texture
 };
@@ -91,11 +91,10 @@ struct World
 const int surfaceFactor = 20;
 
 
-void paintChunk(Chunk &chunk, int xOffset, int yOffset)
+void generateChunkDataPerlin(Chunk &chunk, int xOffset, int yOffset)
 {
   // generate perlin image
   chunk.chunkData = GenImagePerlinNoise(CHUNK_BLOCKS, CHUNK_BLOCKS, xOffset, yOffset, 2);
-
   // check if generated blocks are over or under surface function (sinus)
 
   for(size_t y = 0; y<chunk.chunkData.height;y++)
@@ -116,7 +115,7 @@ void paintChunk(Chunk &chunk, int xOffset, int yOffset)
 }
 
 
-void paintChunk(Chunk &chunk)
+void generateChunkData(Chunk &chunk)
 {
   // paint chunk with random colors
   for (size_t y = 0; y < chunk.chunkData.height; y++)
@@ -125,9 +124,9 @@ void paintChunk(Chunk &chunk)
     {
       Color *ptr = (Color *)chunk.chunkData.data;
       uint16_t rC = (uint16_t)rand() % 610; // rand() % [Number of Textures+1]
-      Color randC = {(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 0};
+      Color randC = {(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 255};
       ptr[y * chunk.chunkData.width + x] = randC;
-      // ptr[y * chunk.chunkData.width + x] = getRandomColor();
+      //ptr[y * chunk.chunkData.width + x] = getRandomColor();
     }
   }
   chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
@@ -143,9 +142,8 @@ void initChunk(Chunk &chunk, size_t id, Tuple chunkPos)
   chunk.chunkData.height = CHUNK_BLOCKS;
   chunk.chunkData.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
   chunk.chunkData.mipmaps = 1;
-  // 64*64*4 = 16384
+  // 64*64*4 = 16384 b
   chunk.chunkData.data = calloc(chunk.chunkData.width * chunk.chunkData.height, sizeof(Color));
-  chunk.chunkTexture = LoadRenderTexture(CHUNK_PIXEL, CHUNK_PIXEL);
   chunk.isLoaded = true;
 }
 
@@ -168,7 +166,14 @@ void handleInput(Player &p, Camera2D &camera)
     p.currentItem--;
   if (IsKeyPressed(KEY_E) && p.currentItem < 608)
     p.currentItem++;
-
+  
+  if (IsKeyPressed(KEY_UP) && VIEW_RADIUS < 65)
+      VIEW_RADIUS += 1;
+  
+  if (IsKeyPressed(KEY_DOWN) && VIEW_RADIUS > 0)
+      VIEW_RADIUS -= 1;
+  
+  
   // if (IsKeyDown(KEY_UP) && p.onGround)
   //   p.velocity.y = p.jumpHeight;
 
@@ -180,6 +185,12 @@ void handleInput(Player &p, Camera2D &camera)
     interaction.InteractionPosition = Chunk::selectedChunkPixel;
     interaction.InteractionType = 0;
     Player::interactions.push(interaction);
+  }
+  if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+  {
+    const Vector2 mouseWorld = GetScreenToWorld2D(GetMousePosition(), camera);
+    p.position = mouseWorld;
+    p.velocity = {0.0f, 0.0f};
   }
   float wheel = GetMouseWheelMove();
   if (wheel != 0.0f)
@@ -235,15 +246,19 @@ void updatePhysics(Player &p, float dt, array<array<unique_ptr<Chunk>, 64>, 64> 
     if (interaction.InteractionType == 0)
     {
       uint16_t rC = interaction.BlockID;
-      ImageDrawPixel(&chunks[interaction.InteractionChunk.x][interaction.InteractionChunk.y]->chunkData,
-                     interaction.InteractionPosition.x, interaction.InteractionPosition.y,
-                     (Color){(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 0});
-      chunks[interaction.InteractionChunk.x][interaction.InteractionChunk.y]->needsUpdate = true;
+      //cout << "Interaction: " << interaction.InteractionChunk.x << ", " << interaction.InteractionChunk.y << endl;
+      ImageDrawPixel(
+        &chunks[interaction.InteractionChunk.y][interaction.InteractionChunk.x]->chunkData,
+        interaction.InteractionPosition.x,
+        interaction.InteractionPosition.y,
+        (Color) {(unsigned char)(rC >> 4),(unsigned char)((rC & 0xF) << 4), 0, 0}
+      );
+      chunks[interaction.InteractionChunk.y][interaction.InteractionChunk.x]->needsUpdate = true;
     }
     Player::interactions.pop();
   }
 }
-void paintOnChunkT(Chunk &chunk)
+void bakeChunk(Chunk &chunk)
 {
   BeginTextureMode(chunk.chunkTexture);
   for (int y = 0; y < CHUNK_BLOCKS; y++)
@@ -270,22 +285,17 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
 
   // draw data of chunks - goes through all chunks in chunks array in draws blocks as pixels
   const int dings = VIEW_RADIUS;
-  for (int y = -dings; y <= dings; y++)
+  
+  for (size_t y = 0; y < chunks.size(); y++)
   {
-    for (int x = -dings; x <= dings; x++)
+    for (size_t x = 0; x < chunks[y].size(); x++)
     {
-      const int chunkX = p.currentPlayerChunk.x + x;
-      const int chunkY = p.currentPlayerChunk.y + y;
-
-      if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
+      if (!chunks[y][x])
         continue;
 
-      if (!chunks[chunkY][chunkX])
-        continue;
-
-      Chunk &chunk = *chunks[chunkY][chunkX];
+      Chunk &chunk = *chunks[y][x];
       const float scale = float(CHUNK_PIXEL) / 64.0f;
-
+      //std::cout << "Loading chunk " << chunk.chunkPos.x << ", " << chunk.chunkPos.y << " height " << chunk.chunkDataTexture.height << "\n";
       DrawTextureEx(chunk.chunkDataTexture,
                    {(float)chunk.chunkPos.x * CHUNK_PIXEL, (float)chunk.chunkPos.y * CHUNK_PIXEL}, 0.0f, 16.0f, WHITE);
     }
@@ -298,7 +308,7 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
   for (int y = -half_chunk_size; y <= half_chunk_size; y++)
   {
     // deactivate drawing of textures
-    continue;
+    //continue;
     for (int x = -half_chunk_size; x <= half_chunk_size; x++)
     {
       const int chunkX = p.currentPlayerChunk.x + x;
@@ -309,14 +319,22 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
       if (chunks[chunkY][chunkX])
       {
         Chunk &chunk = *chunks[chunkY][chunkX];
+        
+        if(chunk.chunkTexture.texture.id == 0)
+        {
+          //cout << "trying to draw chunk with no texture" << "\n";
+          continue;
+        }
+        
         const Tuple chunkPos = {chunkX * CHUNK_PIXEL, chunkY * CHUNK_PIXEL};
-        DrawTexture(chunk.chunkTexture.texture, chunkPos.x, chunkPos.y, WHITE);
+        // flipping the texture vertically
         DrawTextureRec(
           chunk.chunkTexture.texture,
           (Rectangle){0, 0, (float)chunk.chunkTexture.texture.width, -(float)chunk.chunkTexture.texture.height},
           {(float)chunkPos.x, (float)chunkPos.y},
           WHITE
         );
+        //cout << "Chunk at (" << chunkX << ", " << chunkY << ") drawn." << endl;
       }
       else
       {
@@ -413,8 +431,21 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
  * At 64x64 Chunks per World that shouldnt be more than a few hundred mb.
  * todo: needs integration in the world-->chunks Model
  */
+bool canBakeAnotherChunk(size_t& chunksGenerated, double startTime, double budget)
+{
+  if(chunksGenerated == 0) return true;
+  const double elapsed = (GetTime() - startTime) * 1000.0;
+  //cout << elapsed << "\n";
+  return elapsed < budget;
+}
+
 void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
 {
+  // frame budget stuff
+  const double budget = 0.05; // milliseconds
+  const double startTime = GetTime();
+  size_t chunksGenerated = 0;
+  
   // load moore neighbours (more [lmao] or less) of chunk the player is in
   Tuple playerChunk = p.currentPlayerChunk;
   // if (p.currentPlayerChunk.x == p.lastPlayerChunk.x && p.currentPlayerChunk.y == p.lastPlayerChunk.y)
@@ -427,44 +458,47 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
   // chunks are loaded in a box-like structure with the witdth of VIEW_RADIUS + 1
   const int half_width = VIEW_RADIUS;
   for (int y = -half_width; y <= half_width; y++)
+  {
+    for (int x = -half_width; x <= half_width; x++)
     {
-      for (int x = -half_width; x <= half_width; x++)
+      const int chunkX = playerChunk.x + x;
+      const int chunkY = playerChunk.y + y;
+
+      if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
+        continue;
+      // unique_ptr possibly unnecessary
+      unique_ptr<Chunk> &chunkPtr = chunks[chunkY][chunkX];
+      Chunk &chunk = *chunks[chunkY][chunkX];
+
+      if (chunk.chunkTexture.id == 0)
       {
-        const int chunkX = playerChunk.x + x;
-        const int chunkY = playerChunk.y + y;
-
-        if (chunkX < 0 || chunkX >= 64 || chunkY < 0 || chunkY >= 64)
-          continue;
-
-        // unique_ptr possibly unnecessary
-        unique_ptr<Chunk> &chunkPtr = chunks[chunkY][chunkX];
-        if (!chunkPtr)
+        if (canBakeAnotherChunk(chunksGenerated, startTime, budget))
         {
-          chunks[chunkY][chunkX] = make_unique<Chunk>();
-          Chunk &chunk = *chunks[chunkY][chunkX];
-          initChunk(chunk, chunkY * 64 + chunkX, {chunkX, chunkY});
-          //paintChunk(chunk);
-
-          // one block is one pixel in the data texture, thus we need to scale to block-level-resolution
-          // which means 1 block = 1 unit
-          paintChunk(chunk, chunkX*CHUNK_BLOCKS, chunkY*CHUNK_BLOCKS);
-          paintOnChunkT(chunk);
-          chunk.needsUpdate = false;
+          chunk.chunkTexture = LoadRenderTexture(CHUNK_PIXEL, CHUNK_PIXEL);
+          chunk.needsUpdate = true;
+          chunksGenerated++;
         }
         else
         {
-          Chunk &chunk = *chunks[chunkY][chunkX];
-          if (chunk.needsUpdate)
-          {
-            paintOnChunkT(chunk);
-            chunk.needsUpdate = false;
-          }
+          continue;
+        }
+      }
+
+      if (chunk.needsUpdate)
+      {
+        if (canBakeAnotherChunk(chunksGenerated, startTime, budget))
+        {
+          //cout << "Chunk needs update" << "\n";
+          bakeChunk(chunk);
+          chunk.needsUpdate = false;
+          chunksGenerated++;
         }
       }
     }
+  }
 
   // unload distant chunks
-  const float dist = CHUNK_PIXEL * (VIEW_RADIUS + 20) * 100;
+  const float dist = (CHUNK_PIXEL * (VIEW_RADIUS+5))*1.5;
   for (int y = 0; y < chunks.size(); y++)
   {
     for (int x = 0; x < chunks[y].size(); x++)
@@ -474,9 +508,9 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
         Vector2 chunkPos = {(float)x * CHUNK_PIXEL + CHUNK_PIXEL / 2, (float)y * CHUNK_PIXEL + CHUNK_PIXEL / 2};
         if (Vector2Distance(chunkPos, p.position) > dist)
         {
-          // free(chunks[y][x]->data.data);
-          UnloadTexture(chunks[y][x]->chunkDataTexture);
-          chunks[y][x].reset();
+          if(chunks[y][x]->chunkTexture.id != 0)
+            UnloadRenderTexture(chunks[y][x]->chunkTexture);
+          chunks[y][x]->chunkTexture = {};
         }
       }
     }
@@ -516,11 +550,36 @@ int gameLoop(Player &p, vector<World> &worldList, Camera2D &camera)
   return 0;
 }
 
+// generats chunk-data for a World. Dont generate Textures yet.
+// VRAM-lifecycle is completly managed by manageChunks (hopefully)
+void generateWorld(World& world)
+{
+  const int worldWidth = world.width;
+  const int worldHeight = world.height;
+
+  for(int y = 0;y<worldHeight;y++)
+  {
+    for(int x = 0; x < worldWidth; x++)
+    {
+      world.chunkArr[y][x] = make_unique<Chunk>();
+      Chunk &chunk = *world.chunkArr[y][x];
+
+      initChunk(chunk, y * worldWidth + x, {x, y});
+
+      // one block is one pixel in the data texture, thus we need to scale to block-level-resolution
+      // which means 1 block = 1 unit
+      //paintChunk(chunk, x*CHUNK_BLOCKS, y*CHUNK_BLOCKS);
+      generateChunkData(chunk);
+      chunk.needsUpdate = true;
+    }
+  }
+}
+
 int main()
 {
   // initializing
   InitWindow(windowWidth, windowHeight, "elfs-and-wizards");
-  SetTargetFPS(360);
+  SetTargetFPS(360*2);
 
   vector<World> worldList;
   worldList.emplace_back();
@@ -529,7 +588,8 @@ int main()
   Player player = {
       .name = "Louis",
       .id = 1,
-      .position = {.x = 32 * 64 * 16, .y = 32 * 64 * 16},
+      //.position = {.x = 32 * 64 * 16, .y = 32 * 64 * 16},
+      .position = {.x = 32 * 64, .y = 32 * 64}, 
       .playerTexture = LoadTexture("../assets/elf_character.png"),
       .currentItem = 607,
   };
@@ -538,7 +598,15 @@ int main()
   world.name = "Overworld";
   world.playerList.push_back(player);
   world.isLoaded = true;
-
+  
+  std::cout << "Initializing world..." << std::endl;
+  for(World& world : worldList)
+  {
+    generateWorld(world);
+  }
+  
+  std::cout << "World generated" << std::endl;
+  
   for (int i = 0; i < 609; i++)
   {
     string str = "../assets/solids/texture_16px ";
