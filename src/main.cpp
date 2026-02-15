@@ -121,9 +121,6 @@ void generateChunkDataPerlin(Chunk &chunk, int xOffset, int yOffset)
       ptr[y*chunk.chunkData.width + x] = (Color){0, 0, 0, 255};
     }
   }
-  
-  // last: load a texture for debug
-  //chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
 }
 
 
@@ -141,8 +138,6 @@ void generateChunkData(Chunk &chunk)
       //ptr[y * chunk.chunkData.width + x] = getRandomColor();
     }
   }
-  //chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
-  // UnloadImage(chunk.data);
 }
 
 // creating a chunk struct on the pointer, allocating data and RenderTexture for future painting
@@ -308,7 +303,6 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
 
       Chunk &chunk = *chunks[y][x];
       const float scale = float(CHUNK_PIXEL) / 64.0f;
-      //std::cout << "Loading chunk " << chunk.chunkPos.x << ", " << chunk.chunkPos.y << " height " << chunk.chunkDataTexture.height << "\n";
       DrawTextureEx(chunk.chunkDataTexture,
                    {(float)chunk.chunkPos.x * CHUNK_PIXEL, (float)chunk.chunkPos.y * CHUNK_PIXEL}, 0.0f, 16.0f, WHITE);
     }
@@ -448,7 +442,6 @@ bool canBakeAnotherChunk(size_t& chunksGenerated, double startTime, double budge
 {
   if(chunksGenerated == 0) return true;
   const double elapsed = (GetTime() - startTime) * 1000.0;
-  //cout << elapsed << "\n";
   return elapsed < budget;
 }
 
@@ -501,7 +494,6 @@ void manageChunks(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks)
       {
         if (canBakeAnotherChunk(chunksGenerated, startTime, budget))
         {
-          //cout << "Chunk needs update" << "\n";
           bakeChunk(chunk);
           chunk.needsUpdate = false;
           chunksGenerated++;
@@ -596,8 +588,6 @@ void generateWorld(World& world)
   
                   initChunk(chunk, i, {x, y});
                   generateChunkDataPerlin(chunk, x * CHUNK_BLOCKS, y * CHUNK_BLOCKS);
-  
-                  //chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
                   chunk.needsUpdate = true;
               }
           }
@@ -688,23 +678,6 @@ int main()
     str += ".png";
     solidsT[i] = LoadTexture(str.c_str());
   }
-
-  //array<array<unique_ptr<Chunk>, 64>, 64> chunks;
-
-  /*for (size_t i = 0; i < 10; i++)
-  {
-    Chunk chunk = initChunk(loadedChunks, loadedChunks.size()+1);
-    paintChunk(chunk);
-    /*chunk.data = GenImagePerlinNoise(
-      chunk.data.width,
-      chunk.data.height,
-      0, 0,
-      16.0f
-    );
-    chunk.texture = LoadTextureFromImage(chunk.data);
-    loadedChunks.push_back(chunk);
-  }
-  */
 
   Camera2D camera = {0};
   camera.target = {player.position.x, player.position.y};
