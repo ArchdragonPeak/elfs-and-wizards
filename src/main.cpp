@@ -13,6 +13,7 @@
 #include <sstream>
 #include <stdlib.h>
 #include <vector>
+#include <thread>
 
 // mine
 #include "colors.hpp"
@@ -93,10 +94,10 @@ const int surfaceFactor = 20;
 
 void generateChunkDataPerlin(Chunk &chunk, int xOffset, int yOffset)
 {
-  // generate perlin image
+  // 1: generate perlin image
   chunk.chunkData = GenImagePerlinNoise(CHUNK_BLOCKS, CHUNK_BLOCKS, xOffset, yOffset, 2);
-  // check if generated blocks are over or under surface function (sinus)
-
+  
+  // 2: check if generated blocks are over surface function (sinus), if so, set color to black
   for(size_t y = 0; y<chunk.chunkData.height;y++)
   {
     for(size_t x = 0; x<chunk.chunkData.width;x++)
@@ -104,14 +105,25 @@ void generateChunkDataPerlin(Chunk &chunk, int xOffset, int yOffset)
       // getting pointer on raw image data
       int realX = x + xOffset;
       int realY = y + yOffset;
-      if((1000+(sin(realX*0.01f)*surfaceFactor)) < realY)
-        continue;
-
       Color *ptr = (Color *)chunk.chunkData.data;
-      ptr[y * chunk.chunkData.width + x] = (Color){0, 0, 0, 0};
+      if((1000+(sin(realX*0.01f)*surfaceFactor)) < realY)
+      {
+        //ptr[y * chunk.chunkData.width + x] = (Color){255, 255, 255, 255};
+        // take the bits of the pixel that are responsible for texture-id and
+        // perform step fn.
+        Color *dings = &ptr[y*chunk.chunkData.width + x];
+        ptr[y*chunk.chunkData.width + x] =
+          (dings->r < 100) ? (Color){1,160,255,255} : (Color){1,176,255,255};
+        
+        continue;
+      }
+
+      ptr[y*chunk.chunkData.width + x] = (Color){0, 0, 0, 255};
     }
   }
-  chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
+  
+  // last: load a texture for debug
+  //chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
 }
 
 
@@ -124,12 +136,12 @@ void generateChunkData(Chunk &chunk)
     {
       Color *ptr = (Color *)chunk.chunkData.data;
       uint16_t rC = (uint16_t)rand() % 610; // rand() % [Number of Textures+1]
-      Color randC = {(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 255};
+      Color randC = {(unsigned char)(rC >> 4), (unsigned char)((rC & 0xF) << 4), 0, 0};
       ptr[y * chunk.chunkData.width + x] = randC;
       //ptr[y * chunk.chunkData.width + x] = getRandomColor();
     }
   }
-  chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
+  //chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
   // UnloadImage(chunk.data);
 }
 
@@ -267,6 +279,7 @@ void bakeChunk(Chunk &chunk)
     {
       Color pixelColor = GetImageColor(chunk.chunkData, x, y);
       uint16_t id = (pixelColor.r << 4) | (pixelColor.g >> 4);
+      if(id >= 609) id = 1;
       DrawTextureRec(
         solidsT[id],
         (Rectangle){0, 0, BLOCK_PIXEL, BLOCK_PIXEL},
@@ -542,6 +555,7 @@ int gameLoop(Player &p, vector<World> &worldList, Camera2D &camera)
         manageChunks(p, w.chunkArr);
     }
     camera.target = {p.position.x, p.position.y};
+    
     for(World& w : worldList){
       if(w.isLoaded)
         draw(p, w.chunkArr, camera);
@@ -556,9 +570,63 @@ void generateWorld(World& world)
 {
   const int worldWidth = world.width;
   const int worldHeight = world.height;
-
+  
+  unsigned int tcount = std::thread::hardware_concurrency();
+  if (tcount == 0)
+    tcount = 4;
+  
+  std::vector<std::thread> threads;
+  threads.reserve(tcount);
+  
+  for (unsigned int t = 0; t < tcount; ++t)
+  {
+    
+      threads.emplace_back([&, t]()
+      {
+        
+          for (int y = (int)t; y < worldHeight; y += (int)tcount)
+          {
+            
+              for (int x = 0; x < worldWidth; ++x)
+              {
+                  int i = y * worldWidth + x;
+  
+                  world.chunkArr[y][x] = std::make_unique<Chunk>();
+                  Chunk& chunk = *world.chunkArr[y][x];
+  
+                  initChunk(chunk, i, {x, y});
+                  generateChunkDataPerlin(chunk, x * CHUNK_BLOCKS, y * CHUNK_BLOCKS);
+  
+                  //chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
+                  chunk.needsUpdate = true;
+              }
+          }
+      });
+  }
+  
+  for (auto& th : threads)
+    th.join();
+  
   for(int y = 0;y<worldHeight;y++)
   {
+    
+    for(int x = 0; x < worldWidth; x++)
+    {
+      Chunk &chunk = *world.chunkArr[y][x];
+      chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData); 
+    }
+  }
+  
+}
+
+void generateWorldOld(World& world)
+{
+  const int worldWidth = world.width;
+  const int worldHeight = world.height;
+  
+  for(int y = 0;y<worldHeight;y++)
+  {
+    
     for(int x = 0; x < worldWidth; x++)
     {
       world.chunkArr[y][x] = make_unique<Chunk>();
@@ -568,8 +636,9 @@ void generateWorld(World& world)
 
       // one block is one pixel in the data texture, thus we need to scale to block-level-resolution
       // which means 1 block = 1 unit
-      //paintChunk(chunk, x*CHUNK_BLOCKS, y*CHUNK_BLOCKS);
-      generateChunkData(chunk);
+      generateChunkDataPerlin(chunk, x*CHUNK_BLOCKS, y*CHUNK_BLOCKS);
+      //generateChunkData(chunk);
+      chunk.chunkDataTexture = LoadTextureFromImage(chunk.chunkData);
       chunk.needsUpdate = true;
     }
   }
@@ -593,19 +662,24 @@ int main()
       .playerTexture = LoadTexture("../assets/elf_character.png"),
       .currentItem = 607,
   };
+  
   // setup world
   World& world = worldList.back();
   world.name = "Overworld";
   world.playerList.push_back(player);
   world.isLoaded = true;
   
-  std::cout << "Initializing world..." << std::endl;
+  std::cout << "Initializing world..." << "\n";
+  std::chrono::time_point<std::chrono::high_resolution_clock> worldGenStart = std::chrono::high_resolution_clock::now();
   for(World& world : worldList)
   {
     generateWorld(world);
   }
+  std::chrono::time_point<std::chrono::high_resolution_clock> worldGenEnd = std::chrono::high_resolution_clock::now();
+  long long worldGenMs = std::chrono::duration_cast<std::chrono::milliseconds>(worldGenEnd - worldGenStart).count();
   
   std::cout << "World generated" << std::endl;
+  std::cout << "generating World took " << worldGenMs << " ms" << "\n";
   
   for (int i = 0; i < 609; i++)
   {
