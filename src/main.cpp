@@ -31,6 +31,9 @@ constexpr int CHUNK_PIXEL = BLOCK_PIXEL * CHUNK_BLOCKS; // total Pixel per Block
 int VIEW_RADIUS = 8;
 Texture2D solidsT[609] = {}; //todo: allocate dynamically
 
+// font
+Font font = LoadFont("../assets/fonts/DepartureMono-1.500/DepartureMono-Regular.otf");
+
 bool operator==(Color a, Color b) { return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a; }
 
 struct Tuple
@@ -92,6 +95,27 @@ struct World
 const int surfaceFactor = 20;
 
 
+// setting the textureID of a color without changing other bits
+void setTextureID(Color &color, uint16_t textureID)
+{
+  if(textureID > 4095) // 4095 -> 0xFFF -> 12 bits of ones
+  {
+    cout << "Texture ID out of range!" << "\n";
+    return;
+  }
+  
+  color.r = (unsigned char) (textureID >> 4); // important: top 4 bits of textureID are alsways zeroes
+  // we dont want do change low nibble bits of g channel
+  unsigned char highNibbleG = (unsigned char) ((textureID & 0xF) << 4); // only take first 4 bits, push them in high nibble
+  color.g = color.g & 0x0F; // zeroes in high nibble
+  color.g = color.g | highNibbleG;
+}
+
+uint16_t getTextureIDfromColor(Color &color)
+{
+  return (uint16_t)(color.r << 4) | (uint16_t)(color.g >> 4);
+}
+
 void generateChunkDataPerlin(Chunk &chunk, int xOffset, int yOffset)
 {
   // 1: generate perlin image
@@ -112,17 +136,24 @@ void generateChunkDataPerlin(Chunk &chunk, int xOffset, int yOffset)
         // take the bits of the pixel that are responsible for texture-id and
         // perform step fn.
         Color *dings = &ptr[y*chunk.chunkData.width + x];
-        ptr[y*chunk.chunkData.width + x] =
-          (dings->r < 100) ? (Color){1,160,255,255} : (Color){1,176,255,255};
-        
+        //ptr[y*chunk.chunkData.width + x] =
+        //  (dings->r < 150) ? (Color){1,160,255,255} : (Color){1,176,255,255};
+          //(dings->r < 150) ? setTextureID(dings->r, 26) : setTextureID(dings->r, 27);
+        if(dings->r < 150)
+        {
+          setTextureID(*dings, 25); // id=26 -> normal stone
+        }
+        else
+        {
+          setTextureID(*dings, 26); // id=27 -> mossy stone
+        }
         continue;
       }
 
-      ptr[y*chunk.chunkData.width + x] = (Color){0, 0, 0, 255};
+      ptr[y*chunk.chunkData.width + x] = (Color){1, 0, 0, 255};
     }
   }
 }
-
 
 void generateChunkData(Chunk &chunk)
 {
@@ -415,7 +446,8 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
     DrawTexturePro(solidsT[prevItem], texSource, outerItemDestL, outerOrigin, 0, WHITE);
   if (nextItem <= 609)
     DrawTexturePro(solidsT[nextItem], texSource, outerItemDestR, outerOrigin, 0, WHITE);
-
+  
+  // debug area
   DrawRectangle(5, 5, 400, 200, {255, 255, 255, 200});
   DrawFPS(10, 10);
   string zoomStr = "Zoom " + to_string(camera.zoom);
@@ -428,7 +460,11 @@ void draw(Player &p, array<array<unique_ptr<Chunk>, 64>, 64> &chunks, Camera2D &
   playerStream << "Player: " << p.position.x << ", " << p.position.y << " | " << p.velocity.x << ", " << p.velocity.y;
   DrawText(playerStream.str().c_str(), 10, 70, 20, GreenPoly);
   DrawText(TextFormat("Selected item: %d", p.currentItem), 10, 90, 20, GreenPoly);
+  
 
+  //DrawTextEx(GetFontDefault(), "This is a long test sentence to test a new font and a new font", {10, 110}, 50, 5, GreenPoly);
+  //DrawTextEx(font, "This is a long test sentence to test a new font and a new font", {10, 160}, 50, 5, GreenPoly);
+  
   EndDrawing();
 }
 
@@ -639,6 +675,9 @@ int main()
   // initializing
   InitWindow(windowWidth, windowHeight, "elfs-and-wizards");
   SetTargetFPS(360*2);
+  TraceLogLevel(LOG_NONE);
+  if(!IsFontValid(font))
+    font = GetFontDefault();
 
   vector<World> worldList;
   worldList.emplace_back();
@@ -648,9 +687,9 @@ int main()
       .name = "Louis",
       .id = 1,
       //.position = {.x = 32 * 64 * 16, .y = 32 * 64 * 16},
-      .position = {.x = 32 * 64, .y = 32 * 64}, 
+      .position = {.x = 32 * 64 * 10, .y = 32 * 64 * 10}, 
       .playerTexture = LoadTexture("../assets/elf_character.png"),
-      .currentItem = 607,
+      .currentItem = 608,
   };
   
   // setup world
@@ -668,10 +707,10 @@ int main()
   std::chrono::time_point<std::chrono::high_resolution_clock> worldGenEnd = std::chrono::high_resolution_clock::now();
   long long worldGenMs = std::chrono::duration_cast<std::chrono::milliseconds>(worldGenEnd - worldGenStart).count();
   
-  std::cout << "World generated" << std::endl;
+  std::cout << "World generated" << "\n";
   std::cout << "generating World took " << worldGenMs << " ms" << "\n";
   
-  for (int i = 0; i < 609; i++)
+  for (int i = 1; i < 609; i++)
   {
     string str = "../assets/solids/texture_16px ";
     str += to_string(i + 1);
@@ -687,7 +726,7 @@ int main()
 
   // start
   gameLoop(player, worldList, camera);
-
+  
   CloseWindow();
   return 0;
 }
